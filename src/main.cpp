@@ -113,6 +113,41 @@ static void run_decompression()
     }
 }
 
+// ── Speedup benchmark ─────────────────────────────────────────────────────────
+
+static void run_benchmark()
+{
+    print_separator();
+    std::string input  = prompt_path("Archivo de entrada : ");
+    std::string output = prompt_path("Archivo de salida  : ");
+    uint32_t block_sz  = choose_block_size();
+
+    const int thread_counts[] = { 1, 2, 4, 8 };
+    double t_sequential = 0.0;
+
+    print_separator();
+    std::cout << std::left
+              << std::setw(8)  << "Hilos"
+              << std::setw(14) << "Tiempo (s)"
+              << std::setw(10) << "Speedup"
+              << "Eficiencia\n";
+    std::cout << std::string(44, '-') << "\n";
+
+    for (int n : thread_counts) {
+        CompressionResult r = compress_file(input, output, n, block_sz);
+        if (n == 1) t_sequential = r.elapsed_seconds;
+
+        double speedup    = t_sequential / r.elapsed_seconds;
+        double efficiency = speedup / static_cast<double>(n);
+
+        std::cout << std::fixed << std::setprecision(4)
+                  << std::setw(8)  << n
+                  << std::setw(14) << r.elapsed_seconds
+                  << std::setw(10) << speedup
+                  << efficiency    << "\n";
+    }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 int main()
@@ -122,13 +157,15 @@ int main()
         std::cout << "Compresion paralela con Pthreads + zlib\n";
         std::cout << "\n  1. Comprimir archivo"
                      "\n  2. Descomprimir archivo previamente comprimido"
+                     "\n  3. Benchmark de speedup (1/2/4/8 hilos)"
                      "\n  0. Salir\n";
 
-        int choice = prompt_int("\nOpcion: ", 0, 2);
+        int choice = prompt_int("\nOpcion: ", 0, 3);
 
         switch (choice) {
             case 1: run_compression();   break;
             case 2: run_decompression(); break;
+            case 3: run_benchmark();     break;
             case 0:
                 std::cout << "Hasta luego.\n";
                 return 0;
