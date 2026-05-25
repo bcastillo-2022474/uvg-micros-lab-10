@@ -23,11 +23,15 @@ static int prompt_int(const std::string& label, int min_val, int max_val)
     return value;
 }
 
-static std::string prompt_path(const std::string& label)
+static std::string prompt_path(const std::string& label, bool allow_empty = false)
 {
     std::string path;
-    std::cout << label;
-    std::getline(std::cin, path);
+    while (true) {
+        std::cout << label;
+        std::getline(std::cin, path);
+        if (allow_empty || !path.empty()) break;
+        std::cout << "  La ruta no puede estar vacia.\n";
+    }
     return path;
 }
 
@@ -88,7 +92,7 @@ static void run_decompression()
     print_separator();
     std::string input    = prompt_path("Archivo comprimido : ");
     std::string output   = prompt_path("Archivo de salida  : ");
-    std::string original = prompt_path("Original (para verificar integridad, Enter para omitir): ");
+    std::string original = prompt_path("Original (para verificar integridad, Enter para omitir): ", true);
     int threads          = prompt_int("Numero de hilos    : ", 1, 256);
 
     std::cout << "\nDescomprimiendo...\n";
