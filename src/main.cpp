@@ -1,5 +1,5 @@
-#include "compressor.h"
-#include "decompressor.h"
+#include "include/compressor.h"
+#include "include/decompressor.h"
 
 #include <iostream>
 #include <iomanip>

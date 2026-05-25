@@ -1,5 +1,5 @@
-#include "decompressor.h"
-#include "block_io.h"
+#include "include/decompressor.h"
+#include "include/block_io.h"
 
 #include <iostream>
 #include <fstream>
