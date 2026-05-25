@@ -41,10 +41,16 @@ static void* compress_worker(void* arg)
     WorkerArgs* shared = static_cast<WorkerArgs*>(arg);
 
     while (true) {
-        // Block until a work unit is available, then claim it
-        if (sem_wait(&shared->queue_sem) != 0) break;
+        // Block until a work unit is available or a shutdown signal arrives
+        sem_wait(&shared->queue_sem);
 
         pthread_mutex_lock(&shared->queue_mutex);
+        if (shared->next_block >= shared->num_blocks) {
+            // Shutdown signal: re-post so other threads also wake and exit
+            pthread_mutex_unlock(&shared->queue_mutex);
+            sem_post(&shared->queue_sem);
+            break;
+        }
         uint32_t idx = shared->next_block++;
         pthread_mutex_unlock(&shared->queue_mutex);
 
@@ -132,6 +138,11 @@ CompressionResult compress_file(const std::string& input_path,
     for (int i = 0; i < num_threads; ++i) {
         pthread_create(&threads[i], nullptr, compress_worker, &shared);
     }
+
+    // One extra post after all real work is enqueued so the first thread
+    // that finds next_block >= num_blocks propagates shutdown to the rest.
+    sem_post(&shared.queue_sem);
+
     for (int i = 0; i < num_threads; ++i) {
         pthread_join(threads[i], nullptr);
     }
