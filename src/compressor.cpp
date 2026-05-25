@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstring>
 #include <pthread.h>
+#include <semaphore.h>
 #include <zlib.h>
 #include <time.h>
 
@@ -18,17 +19,19 @@ struct WorkerArgs {
     uint32_t       block_size;
     uint32_t       num_blocks;
 
-    // Work queue: next block index to claim
-    uint32_t            next_block;
-    pthread_mutex_t     queue_mutex;
+    // Work queue: semaphore counts remaining blocks; next_block is the index
+    // to claim next. A thread does: sem_wait → read next_block → increment.
+    sem_t           queue_sem;
+    uint32_t        next_block;
+    pthread_mutex_t queue_mutex;  // protects next_block only
 
     // Output: one slot per block, filled by workers
     std::vector<CompressedBlock> results;
 
     // Ordered-write gate: workers wait until it's their turn
-    uint32_t            next_to_write;
-    pthread_mutex_t     write_mutex;
-    pthread_cond_t      write_cond;
+    uint32_t        next_to_write;
+    pthread_mutex_t write_mutex;
+    pthread_cond_t  write_cond;
 };
 
 // ── Worker thread ─────────────────────────────────────────────────────────────
@@ -38,12 +41,10 @@ static void* compress_worker(void* arg)
     WorkerArgs* shared = static_cast<WorkerArgs*>(arg);
 
     while (true) {
-        // Claim the next available block index
+        // Block until a work unit is available, then claim it
+        if (sem_wait(&shared->queue_sem) != 0) break;
+
         pthread_mutex_lock(&shared->queue_mutex);
-        if (shared->next_block >= shared->num_blocks) {
-            pthread_mutex_unlock(&shared->queue_mutex);
-            break;
-        }
         uint32_t idx = shared->next_block++;
         pthread_mutex_unlock(&shared->queue_mutex);
 
@@ -55,7 +56,7 @@ static void* compress_worker(void* arg)
 
         const uint8_t* src = shared->file_data + offset;
 
-        // Compress the block
+        // Compress the block independently
         uLongf bound = compressBound(static_cast<uLong>(raw_len));
         std::vector<uint8_t> compressed(bound);
 
@@ -70,7 +71,7 @@ static void* compress_worker(void* arg)
         }
         compressed.resize(actual_size);
 
-        // Wait for our turn to write the result into the shared results vector
+        // Wait for our turn to commit the result (ordered write)
         pthread_mutex_lock(&shared->write_mutex);
         while (shared->next_to_write != idx) {
             pthread_cond_wait(&shared->write_cond, &shared->write_mutex);
@@ -116,15 +117,17 @@ CompressionResult compress_file(const std::string& input_path,
     shared.next_block    = 0;
     shared.next_to_write = 0;
     shared.results.resize(num_blocks);
+
+    // Semaphore is initialized to num_blocks: each post represents one block
+    // of work available. Workers consume one unit per block they process.
+    sem_init(&shared.queue_sem, 0, num_blocks);
     pthread_mutex_init(&shared.queue_mutex, nullptr);
     pthread_mutex_init(&shared.write_mutex, nullptr);
     pthread_cond_init(&shared.write_cond, nullptr);
 
-    // Start timing
     struct timespec t_start, t_end;
     clock_gettime(CLOCK_MONOTONIC, &t_start);
 
-    // Spawn worker threads
     std::vector<pthread_t> threads(num_threads);
     for (int i = 0; i < num_threads; ++i) {
         pthread_create(&threads[i], nullptr, compress_worker, &shared);
@@ -135,11 +138,11 @@ CompressionResult compress_file(const std::string& input_path,
 
     clock_gettime(CLOCK_MONOTONIC, &t_end);
 
+    sem_destroy(&shared.queue_sem);
     pthread_mutex_destroy(&shared.queue_mutex);
     pthread_mutex_destroy(&shared.write_mutex);
     pthread_cond_destroy(&shared.write_cond);
 
-    // Write output file
     bool ok = write_compressed_file(output_path, shared.results, block_size);
     if (!ok) {
         std::cerr << "Error escribiendo archivo comprimido.\n";
